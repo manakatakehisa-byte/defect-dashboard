@@ -218,9 +218,10 @@ export default function Dashboard() {
   const [aiAnalysis,setAiAnalysis]=useState("");
   const [aiLoading,setAiLoading]=useState(false);
   const [aiError,setAiError]=useState("");
+  const [selectedTrendItems,setSelectedTrendItems]=useState([]); // ★ 品番別推移
   const prevDFacs=useRef([]); const [dTypes,setDTypes]=useState([]); const [dInsps,setDInsps]=useState([]);
   const [dItems,setDItems]=useState([]); const [dRounds,setDRounds]=useState([]);
-  // 工場が変わったらAI分析を自動実行
+
   useEffect(()=>{
     if(dFacs.length===0){ setAiAnalysis(""); return; }
     const fetchAI=async()=>{
@@ -540,12 +541,11 @@ export default function Dashboard() {
             <MultiSel label="検品種別"  values={dInsps}  onChange={setDInsps}  options={inspTypes} />
             <MultiSel label="品番"      values={dItems}  onChange={setDItems}  options={[...new Set((dFacs.length>0?data.filter(d=>dFacs.includes(d.factory)):data).map(d=>d.itemNo))].filter(Boolean).sort()} />
             <MultiSel label="検品回数"  values={dRounds} onChange={setDRounds} options={rounds} />
-            <Rst onClick={()=>{setDFacs([]);setDTypes([]);setDInsps([]);setDItems([]);setDRounds([]);}} />
+            <Rst onClick={()=>{setDFacs([]);setDTypes([]);setDInsps([]);setDItems([]);setDRounds([]);setSelectedTrendItems([]);}} />
           </FilterBar>
           {(()=>{
             const insp=drillData.reduce((s,d)=>s+d.count,0), def=drillData.reduce((s,d)=>s+d.total,0), r=rate(def,insp);
             const its=byItem(drillData).slice(0,12), pieT=its.reduce((s,d)=>s+d.value,0);
-            // 月ごとに品番・詳細情報も集計
             const mthMap={};
             drillData.forEach(d=>{
               if(!d.ym) return;
@@ -555,6 +555,52 @@ export default function Dashboard() {
             });
             const mths=Object.values(mthMap).sort((a,b)=>a.month.localeCompare(b.month)).map(r=>({...r,rate:rate(r.def,r.insp)}));
             const rows=[...drillData].filter(d=>d.hasDefect).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,60);
+
+            // ★ 品番別推移データ
+            const allItemNos=[...new Set(drillData.map(d=>d.itemNo))].filter(Boolean).sort();
+            const itemMonthMap={};
+            drillData.forEach(d=>{
+              if(!d.ym||!d.itemNo) return;
+              const key=`${d.itemNo}__${d.ym}`;
+              if(!itemMonthMap[key]) itemMonthMap[key]={itemNo:d.itemNo,month:d.ym,insp:0,def:0};
+              itemMonthMap[key].insp+=d.count; itemMonthMap[key].def+=d.total;
+            });
+            const allMonths=[...new Set(drillData.map(d=>d.ym))].filter(Boolean).sort();
+            const trendData=allMonths.map(month=>{
+              const entry={month};
+              selectedTrendItems.forEach(itemNo=>{
+                const key=`${itemNo}__${month}`;
+                const r=itemMonthMap[key];
+                entry[itemNo]=r&&r.insp>0?rate(r.def,r.insp):null;
+              });
+              return entry;
+            });
+
+            // ★ 品番別集計（月次平均不備率も計算）
+            const itemSummary={};
+            const itemMonthRates={};
+            drillData.forEach(d=>{
+              if(!d.itemNo) return;
+              if(!itemSummary[d.itemNo]) itemSummary[d.itemNo]={itemNo:d.itemNo,insp:0,def:0,defMap:{}};
+              itemSummary[d.itemNo].insp+=d.count; itemSummary[d.itemNo].def+=d.total;
+              (d.defectItems||[]).forEach(x=>{ itemSummary[d.itemNo].defMap[x.item]=(itemSummary[d.itemNo].defMap[x.item]||0)+x.qty; });
+              if(d.ym){
+                if(!itemMonthRates[d.itemNo]) itemMonthRates[d.itemNo]={};
+                if(!itemMonthRates[d.itemNo][d.ym]) itemMonthRates[d.itemNo][d.ym]={insp:0,def:0};
+                itemMonthRates[d.itemNo][d.ym].insp+=d.count;
+                itemMonthRates[d.itemNo][d.ym].def+=d.total;
+              }
+            });
+            Object.keys(itemSummary).forEach(itemNo=>{
+              const months=Object.values(itemMonthRates[itemNo]||{});
+              const monthRates=months.filter(m=>m.insp>0).map(m=>+(m.def/m.insp*100).toFixed(2));
+              itemSummary[itemNo].avgRate=monthRates.length>0?+(monthRates.reduce((s,v)=>s+v,0)/monthRates.length).toFixed(2):0;
+              itemSummary[itemNo].monthCount=monthRates.length;
+              itemSummary[itemNo].minRate=monthRates.length>0?Math.min(...monthRates):0;
+              itemSummary[itemNo].maxRate=monthRates.length>0?Math.max(...monthRates):0;
+            });
+            const itemSummaryList=Object.values(itemSummary).sort((a,b)=>b.avgRate-a.avgRate);
+
             return (<>
               <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
                 <h1 style={{ fontSize:16, fontWeight:700, color:"var(--accent)" }}>{dFacs.length>0?dFacs.join("・"):"全工場"}</h1>
@@ -633,13 +679,11 @@ export default function Dashboard() {
                           </tr></thead>
                           <tbody>
                             {(()=>{
-                              // 品番ごとにまとめて集計
                               const itemMap={};
                               (clickedMonth.items||[]).forEach(t=>{
                                 const key=t.itemNo||"不明";
                                 if(!itemMap[key]) itemMap[key]={itemNo:key,count:0,total:0,defMap:{}};
-                                itemMap[key].count+=t.count;
-                                itemMap[key].total+=t.total;
+                                itemMap[key].count+=t.count; itemMap[key].total+=t.total;
                                 t.defectItems.forEach(x=>{ itemMap[key].defMap[x.item]=(itemMap[key].defMap[x.item]||0)+x.qty; });
                               });
                               return Object.values(itemMap).sort((a,b)=>rate(b.total,b.count)-rate(a.total,a.count)).map((t,i)=>{
@@ -662,6 +706,124 @@ export default function Dashboard() {
                   )}
                 </Panel>
               </div>
+
+              {/* ★ 品番別 不備率推移グラフ */}
+              <Panel style={{ marginBottom:16 }}>
+                <ST>品番別 不備率推移</ST>
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontSize:10, color:"var(--text3)", marginBottom:6 }}>品番を選択してグラフに追加（複数可・最大8品番）</div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                    {allItemNos.map((itemNo,i)=>{
+                      const sel=selectedTrendItems.includes(itemNo);
+                      const colorIdx=selectedTrendItems.indexOf(itemNo);
+                      return (
+                        <button key={itemNo} onClick={()=>{
+                          if(sel){ setSelectedTrendItems(selectedTrendItems.filter(x=>x!==itemNo)); }
+                          else if(selectedTrendItems.length<8){ setSelectedTrendItems([...selectedTrendItems,itemNo]); }
+                        }} style={{
+                          padding:"4px 10px", borderRadius:6, fontSize:11, cursor:"pointer", fontWeight:sel?700:400,
+                          border:`1.5px solid ${sel?COLORS[colorIdx%COLORS.length]:"var(--border2)"}`,
+                          background:sel?COLORS[colorIdx%COLORS.length]+"22":"var(--surface2)",
+                          color:sel?COLORS[colorIdx%COLORS.length]:"var(--text2)",
+                          opacity:(!sel&&selectedTrendItems.length>=8)?0.4:1,
+                          transition:"all 0.15s",
+                        }}>
+                          {sel&&<span style={{marginRight:4}}>✓</span>}{itemNo}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedTrendItems.length>0&&(
+                    <button onClick={()=>setSelectedTrendItems([])} style={{ marginTop:8, background:"transparent", border:"1px solid var(--border2)", color:"var(--text3)", borderRadius:6, padding:"3px 10px", fontSize:10, cursor:"pointer" }}>
+                      クリア
+                    </button>
+                  )}
+                </div>
+                {selectedTrendItems.length===0?(
+                  <div style={{ textAlign:"center", color:"var(--text3)", padding:40, fontSize:12, background:"var(--surface2)", borderRadius:8 }}>
+                    ↑ 上のボタンから品番を選択すると推移グラフが表示されます
+                  </div>
+                ):(
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="month" tick={{fill:"var(--text3)",fontSize:10}} axisLine={false} tickLine={false} />
+                      <YAxis tick={{fill:"var(--text3)",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v+"%"} />
+                      <Tooltip content={({active,payload,label})=>{
+                        if(!active||!payload?.length) return null;
+                        return (
+                          <div style={{background:"var(--surface)",border:"1.5px solid var(--border2)",borderRadius:8,padding:"10px 14px",fontSize:11,boxShadow:"0 4px 12px rgba(46,95,163,0.1)"}}>
+                            <div style={{color:"var(--text2)",marginBottom:6,fontWeight:600}}>{label}</div>
+                            {payload.filter(p=>p.value!==null).map((p,i)=>(
+                              <div key={i} style={{color:p.color,marginBottom:2}}>
+                                {p.name}: <b style={{fontFamily:"var(--mono)"}}>{p.value}%</b>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }}/>
+                      <Legend wrapperStyle={{fontSize:11,color:"var(--text2)"}}/>
+                      {selectedTrendItems.map((itemNo,i)=>(
+                        <Line key={itemNo} type="monotone" dataKey={itemNo} stroke={COLORS[i%COLORS.length]} strokeWidth={2.5}
+                          dot={{r:4,fill:COLORS[i%COLORS.length],strokeWidth:0}} connectNulls name={itemNo}/>
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </Panel>
+
+              {/* ★ 品番別サマリーテーブル（月次平均不備率付き） */}
+              <Panel style={{ marginBottom:16 }}>
+                <ST>品番別 不備率サマリー（月次平均不備率順）</ST>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                    <thead><tr style={{ borderBottom:"2px solid var(--border)" }}>
+                      {["#","品番","検品数","不備数","累計不備率","月次平均不備率","最小","最大","月数","主な不備TOP3","推移に追加"].map(h=>(
+                        <th key={h} style={{ padding:"6px 10px", textAlign:(h==="品番"||h==="主な不備TOP3")?"left":"right", color:"var(--accent)", fontWeight:700, fontSize:10, whiteSpace:"nowrap" }}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {itemSummaryList.map((d,i)=>{
+                        const rv=rate(d.def,d.insp);
+                        const topDefs=Object.entries(d.defMap).sort((a,b)=>b[1]-a[1]).slice(0,3);
+                        const sel=selectedTrendItems.includes(d.itemNo);
+                        const colorIdx=selectedTrendItems.indexOf(d.itemNo);
+                        return (
+                          <tr key={d.itemNo} style={{ borderBottom:"1px solid var(--border)" }}
+                            onMouseEnter={e=>e.currentTarget.style.background="var(--surface2)"}
+                            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                            <td style={{ padding:"6px 10px", textAlign:"right", color:"var(--text3)", fontFamily:"var(--mono)", fontSize:9 }}>{i+1}</td>
+                            <td style={{ padding:"6px 10px", color:"var(--blue)", fontFamily:"var(--mono)", fontWeight:600 }}>{d.itemNo}</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", color:"var(--text2)" }}>{fmt(d.insp)}</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", color:"var(--red)" }}>{fmt(d.def)}</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", color:rateColor(rv) }}>{rv}%</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", fontWeight:700, color:rateColor(d.avgRate) }}>{d.avgRate}%</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", fontSize:10, color:"var(--green)" }}>{d.minRate}%</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", fontSize:10, color:"var(--red)" }}>{d.maxRate}%</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", color:"var(--text3)", fontSize:10 }}>{d.monthCount}ヶ月</td>
+                            <td style={{ padding:"6px 10px", color:"var(--text3)", fontSize:10 }}>{topDefs.map(([k,v])=>`${k}(${v})`).join("、")}</td>
+                            <td style={{ padding:"6px 10px", textAlign:"center" }}>
+                              <button onClick={()=>{
+                                if(sel){ setSelectedTrendItems(selectedTrendItems.filter(x=>x!==d.itemNo)); }
+                                else if(selectedTrendItems.length<8){ setSelectedTrendItems([...selectedTrendItems,d.itemNo]); }
+                              }} style={{
+                                padding:"3px 10px", borderRadius:5, fontSize:10, cursor:"pointer", fontWeight:sel?700:400,
+                                border:`1.5px solid ${sel?COLORS[colorIdx%COLORS.length]:"var(--border2)"}`,
+                                background:sel?COLORS[colorIdx%COLORS.length]:"transparent",
+                                color:sel?"#fff":"var(--text2)",
+                                opacity:(!sel&&selectedTrendItems.length>=8)?0.4:1,
+                              }}>
+                                {sel?"✓ 表示中":"＋ 追加"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
               <Panel>
                 <ST>明細（不備あり・不備率降順）</ST>
                 <div style={{ overflowX:"auto" }}>
