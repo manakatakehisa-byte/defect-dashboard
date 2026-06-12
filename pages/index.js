@@ -711,7 +711,7 @@ export default function Dashboard() {
               <Panel style={{ marginBottom:16 }}>
                 <ST>品番別 不備率推移</ST>
                 <div style={{ marginBottom:12 }}>
-                  <div style={{ fontSize:10, color:"var(--text3)", marginBottom:6 }}>品番を選択してグラフに追加（複数可・最大8品番）</div>
+                  <div style={{ fontSize:10, color:"var(--text3)", marginBottom:6 }}>品番を選択してグラフに追加（複数可）</div>
                   <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
                     {allItemNos.map((itemNo,i)=>{
                       const sel=selectedTrendItems.includes(itemNo);
@@ -719,13 +719,13 @@ export default function Dashboard() {
                       return (
                         <button key={itemNo} onClick={()=>{
                           if(sel){ setSelectedTrendItems(selectedTrendItems.filter(x=>x!==itemNo)); }
-                          else if(selectedTrendItems.length<8){ setSelectedTrendItems([...selectedTrendItems,itemNo]); }
+                          else { setSelectedTrendItems([...selectedTrendItems,itemNo]); }
                         }} style={{
                           padding:"4px 10px", borderRadius:6, fontSize:11, cursor:"pointer", fontWeight:sel?700:400,
                           border:`1.5px solid ${sel?COLORS[colorIdx%COLORS.length]:"var(--border2)"}`,
                           background:sel?COLORS[colorIdx%COLORS.length]+"22":"var(--surface2)",
                           color:sel?COLORS[colorIdx%COLORS.length]:"var(--text2)",
-                          opacity:(!sel&&selectedTrendItems.length>=8)?0.4:1,
+                          opacity:1,
                           transition:"all 0.15s",
                         }}>
                           {sel&&<span style={{marginRight:4}}>✓</span>}{itemNo}
@@ -805,13 +805,13 @@ export default function Dashboard() {
                             <td style={{ padding:"6px 10px", textAlign:"center" }}>
                               <button onClick={()=>{
                                 if(sel){ setSelectedTrendItems(selectedTrendItems.filter(x=>x!==d.itemNo)); }
-                                else if(selectedTrendItems.length<8){ setSelectedTrendItems([...selectedTrendItems,d.itemNo]); }
+                                else { setSelectedTrendItems([...selectedTrendItems,d.itemNo]); }
                               }} style={{
                                 padding:"3px 10px", borderRadius:5, fontSize:10, cursor:"pointer", fontWeight:sel?700:400,
                                 border:`1.5px solid ${sel?COLORS[colorIdx%COLORS.length]:"var(--border2)"}`,
                                 background:sel?COLORS[colorIdx%COLORS.length]:"transparent",
                                 color:sel?"#fff":"var(--text2)",
-                                opacity:(!sel&&selectedTrendItems.length>=8)?0.4:1,
+                                opacity:1,
                               }}>
                                 {sel?"✓ 表示中":"＋ 追加"}
                               </button>
