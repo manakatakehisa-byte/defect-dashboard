@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend } from "recharts";
 import { COLORS, rate, fmt, rateColor, parseYM, byFactory, byMonth, byDate, byItem } from "../lib/utils";
+import * as XLSX from "xlsx";
 
 function MultiSel({ label, values, onChange, options, placeholder = "すべて" }) {
   const [open, setOpen] = useState(false);
@@ -156,7 +157,7 @@ function CsvBtn({ data, filename }) {
   );
 }
 
-function FactoryCsvBtn({ drillData, mths, its, itemSummaryList, dFacs }) {
+function FactoryXlsxBtn({ drillData, mths, its, itemSummaryList, dFacs }) {
   const fmtDate = d => {
     if (!d) return "";
     const dt = new Date(d);
@@ -164,45 +165,61 @@ function FactoryCsvBtn({ drillData, mths, its, itemSummaryList, dFacs }) {
     return `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}`;
   };
   const handleClick = () => {
+    const wb = XLSX.utils.book_new();
     const pieT = its.reduce((s,d)=>s+d.value,0);
-    const sections = [
-      {
-        title: `■ 品番別サマリー（${dFacs.length>0?dFacs.join("・"):"全工場"}）`,
-        headers: ["品番","検品数","不備数","累計不備率(%)","月次平均不備率(%)","最小(%)","最大(%)","月数","主な不備TOP3"],
-        rows: itemSummaryList.map(d => {
-          const rv = d.insp>0?((d.def/d.insp)*100).toFixed(2):0;
-          const topDefs = Object.entries(d.defMap).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}(${v})`).join(" | ");
-          return [d.itemNo, d.insp, d.def, rv, d.avgRate, d.minRate, d.maxRate, d.monthCount, topDefs];
-        })
-      },
-      {
-        title: "■ 不備内容内訳",
-        headers: ["不備項目","件数","割合(%)"],
-        rows: its.map(d => [d.name, d.value, pieT>0?((d.value/pieT)*100).toFixed(1):0])
-      },
-      {
-        title: "■ 月次推移",
-        headers: ["年月","検品数","不備数","不備率(%)"],
-        rows: mths.map(m => [m.month, m.insp, m.def, m.rate])
-      },
-      {
-        title: "■ 明細データ（不備あり）",
-        headers: ["日付","工場名","取引種別","検品種別","品番","検品回数","検品数","不備数","不備率(%)","主な不備内容"],
-        rows: [...drillData].filter(d=>d.hasDefect).sort((a,b)=>b.date.localeCompare(a.date)).map(d => [
-          fmtDate(d.date), d.factory, d.type, d.inspectionType, d.itemNo, d.round,
-          d.count, d.total,
-          d.count>0?((d.total/d.count)*100).toFixed(2):0,
-          (d.defectItems||[]).slice(0,5).map(x=>`${x.item}×${x.qty}`).join(" | ")
-        ])
-      }
+
+    // Sheet1: 品番別サマリー
+    const s1data = [
+      ["品番","検品数","不備数","累計不備率(%)","月次平均不備率(%)","最小(%)","最大(%)","月数","主な不備TOP3"],
+      ...itemSummaryList.map(d => {
+        const rv = d.insp>0?+((d.def/d.insp)*100).toFixed(2):0;
+        const topDefs = Object.entries(d.defMap).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}(${v})`).join(" / ");
+        return [d.itemNo, d.insp, d.def, rv, d.avgRate, d.minRate, d.maxRate, d.monthCount, topDefs];
+      })
     ];
-    const fname = `工場詳細_${(dFacs[0]||"全工場").slice(0,10)}_${new Date().toISOString().slice(0,10)}.csv`;
-    downloadCSV(sections, fname);
+    const ws1 = XLSX.utils.aoa_to_sheet(s1data);
+    ws1['!cols'] = [14,10,10,14,16,10,10,8,40].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws1, "品番別サマリー");
+
+    // Sheet2: 不備内容内訳
+    const s2data = [
+      ["不備項目","件数","割合(%)"],
+      ...its.map(d => [d.name, d.value, pieT>0?+((d.value/pieT)*100).toFixed(1):0])
+    ];
+    const ws2 = XLSX.utils.aoa_to_sheet(s2data);
+    ws2['!cols'] = [20,10,10].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws2, "不備内容内訳");
+
+    // Sheet3: 月次推移
+    const s3data = [
+      ["年月","検品数","不備数","不備率(%)"],
+      ...mths.map(m => [m.month, m.insp, m.def, m.rate])
+    ];
+    const ws3 = XLSX.utils.aoa_to_sheet(s3data);
+    ws3['!cols'] = [12,10,10,10].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws3, "月次推移");
+
+    // Sheet4: 明細
+    const s4data = [
+      ["日付","工場名","取引種別","検品種別","品番","検品回数","検品数","不備数","不備率(%)","主な不備内容"],
+      ...[...drillData].filter(d=>d.hasDefect).sort((a,b)=>b.date.localeCompare(a.date)).map(d => [
+        fmtDate(d.date), d.factory, d.type, d.inspectionType, d.itemNo, d.round,
+        d.count, d.total,
+        d.count>0?+((d.total/d.count)*100).toFixed(2):0,
+        (d.defectItems||[]).slice(0,5).map(x=>`${x.item}×${x.qty}`).join(" / ")
+      ])
+    ];
+    const ws4 = XLSX.utils.aoa_to_sheet(s4data);
+    ws4['!cols'] = [12,14,16,14,12,8,10,10,10,40].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws4, "明細データ");
+
+    const fname = `工場詳細_${(dFacs[0]||"全工場").slice(0,10)}_${new Date().toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(wb, fname);
   };
   return (
     <button onClick={handleClick}
       style={{ background:"var(--green)", border:"none", color:"#fff", borderRadius:8, padding:"5px 14px", fontSize:11, cursor:"pointer", fontWeight:700, display:"flex", alignItems:"center", gap:5 }}>
-      ⬇ CSV（全データ）
+      ⬇ Excel（全データ）
     </button>
   );
 }
@@ -710,7 +727,7 @@ export default function Dashboard() {
                 <h1 style={{ fontSize:16, fontWeight:700, color:"var(--accent)" }}>{dFacs.length>0?dFacs.join("・"):"全工場"}</h1>
                 {[...dTypes,...dInsps,...dItems,...dRounds].map((v,i)=><span key={i} style={{ background:"var(--accent-dim)", color:"var(--accent)", borderRadius:4, padding:"2px 7px", fontSize:10, fontWeight:600 }}>{v}</span>)}
                 </div>
-                <FactoryCsvBtn drillData={drillData} mths={mths} its={its} itemSummaryList={itemSummaryList} dFacs={dFacs} />
+                <FactoryXlsxBtn drillData={drillData} mths={mths} its={its} itemSummaryList={itemSummaryList} dFacs={dFacs} />
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
                 <Kpi label="検品数"   value={fmt(insp)}      color="var(--blue)"   small />
