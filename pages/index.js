@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend } from "recharts";
 import { COLORS, rate, fmt, rateColor, parseYM, byFactory, byMonth, byDate, byItem } from "../lib/utils";
-import * as XLSX from "xlsx";
 
 function MultiSel({ label, values, onChange, options, placeholder = "すべて" }) {
   const [open, setOpen] = useState(false);
@@ -107,122 +106,6 @@ function Tag({ children }) {
   return <span style={{ background:"var(--surface3)", color:"var(--text2)", borderRadius:4, padding:"2px 7px", fontSize:10, fontWeight:600 }}>{children}</span>;
 }
 
-function downloadCSV(sections, filename) {
-  const escape = v => {
-    const s = String(v ?? "");
-    return s.includes(",") || s.includes("\n") || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
-  };
-  const fmtDate = d => {
-    if (!d) return "";
-    const dt = new Date(d);
-    if (isNaN(dt)) return String(d);
-    return `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}`;
-  };
-  let lines = [];
-  sections.forEach(({ title, headers, rows }) => {
-    lines.push(escape(title));
-    lines.push(headers.map(escape).join(","));
-    rows.forEach(r => lines.push(r.map(escape).join(",")));
-    lines.push("");
-  });
-  const bom = "\uFEFF";
-  const blob = new Blob([bom + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
-
-function CsvBtn({ data, filename }) {
-  const fmtDate = d => {
-    if (!d) return "";
-    const dt = new Date(d);
-    if (isNaN(dt)) return String(d);
-    return `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}`;
-  };
-  return (
-    <button onClick={() => downloadCSV([{
-      title: "■ 明細データ",
-      headers: ["日付","工場名","取引種別","検品種別","品番","検品回数","検品数","不備数","不備率(%)","主な不備内容"],
-      rows: (data||[]).map(d => [
-        fmtDate(d.date), d.factory, d.type, d.inspectionType, d.itemNo, d.round,
-        d.count, d.total,
-        d.count > 0 ? ((d.total/d.count)*100).toFixed(2) : "0",
-        (d.defectItems||[]).slice(0,5).map(x=>`${x.item}×${x.qty}`).join(" | ")
-      ])
-    }], filename)}
-      style={{ background:"var(--green)", border:"none", color:"#fff", borderRadius:8, padding:"5px 14px", fontSize:11, cursor:"pointer", fontWeight:700, display:"flex", alignItems:"center", gap:5 }}>
-      ⬇ CSV
-    </button>
-  );
-}
-
-function FactoryXlsxBtn({ drillData, mths, its, itemSummaryList, dFacs }) {
-  const fmtDate = d => {
-    if (!d) return "";
-    const dt = new Date(d);
-    if (isNaN(dt)) return String(d);
-    return `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}`;
-  };
-  const handleClick = () => {
-    const wb = XLSX.utils.book_new();
-    const pieT = its.reduce((s,d)=>s+d.value,0);
-
-    // Sheet1: 品番別サマリー
-    const s1data = [
-      ["品番","検品数","不備数","累計不備率(%)","月次平均不備率(%)","最小(%)","最大(%)","月数","主な不備TOP3"],
-      ...itemSummaryList.map(d => {
-        const rv = d.insp>0?+((d.def/d.insp)*100).toFixed(2):0;
-        const topDefs = Object.entries(d.defMap).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}(${v})`).join(" / ");
-        return [d.itemNo, d.insp, d.def, rv, d.avgRate, d.minRate, d.maxRate, d.monthCount, topDefs];
-      })
-    ];
-    const ws1 = XLSX.utils.aoa_to_sheet(s1data);
-    ws1['!cols'] = [14,10,10,14,16,10,10,8,40].map(w=>({wch:w}));
-    XLSX.utils.book_append_sheet(wb, ws1, "品番別サマリー");
-
-    // Sheet2: 不備内容内訳
-    const s2data = [
-      ["不備項目","件数","割合(%)"],
-      ...its.map(d => [d.name, d.value, pieT>0?+((d.value/pieT)*100).toFixed(1):0])
-    ];
-    const ws2 = XLSX.utils.aoa_to_sheet(s2data);
-    ws2['!cols'] = [20,10,10].map(w=>({wch:w}));
-    XLSX.utils.book_append_sheet(wb, ws2, "不備内容内訳");
-
-    // Sheet3: 月次推移
-    const s3data = [
-      ["年月","検品数","不備数","不備率(%)"],
-      ...mths.map(m => [m.month, m.insp, m.def, m.rate])
-    ];
-    const ws3 = XLSX.utils.aoa_to_sheet(s3data);
-    ws3['!cols'] = [12,10,10,10].map(w=>({wch:w}));
-    XLSX.utils.book_append_sheet(wb, ws3, "月次推移");
-
-    // Sheet4: 明細
-    const s4data = [
-      ["日付","工場名","取引種別","検品種別","品番","検品回数","検品数","不備数","不備率(%)","主な不備内容"],
-      ...[...drillData].filter(d=>d.hasDefect).sort((a,b)=>b.date.localeCompare(a.date)).map(d => [
-        fmtDate(d.date), d.factory, d.type, d.inspectionType, d.itemNo, d.round,
-        d.count, d.total,
-        d.count>0?+((d.total/d.count)*100).toFixed(2):0,
-        (d.defectItems||[]).slice(0,5).map(x=>`${x.item}×${x.qty}`).join(" / ")
-      ])
-    ];
-    const ws4 = XLSX.utils.aoa_to_sheet(s4data);
-    ws4['!cols'] = [12,14,16,14,12,8,10,10,10,40].map(w=>({wch:w}));
-    XLSX.utils.book_append_sheet(wb, ws4, "明細データ");
-
-    const fname = `工場詳細_${(dFacs[0]||"全工場").slice(0,10)}_${new Date().toISOString().slice(0,10)}.xlsx`;
-    XLSX.writeFile(wb, fname);
-  };
-  return (
-    <button onClick={handleClick}
-      style={{ background:"var(--green)", border:"none", color:"#fff", borderRadius:8, padding:"5px 14px", fontSize:11, cursor:"pointer", fontWeight:700, display:"flex", alignItems:"center", gap:5 }}>
-      ⬇ Excel（全データ）
-    </button>
-  );
-}
 
 function Rst({ onClick }) {
   return <button onClick={onClick} style={{ background:"transparent", border:"1.5px solid var(--border2)", color:"var(--text3)", borderRadius:8, padding:"5px 14px", fontSize:11, alignSelf:"flex-end", cursor:"pointer", fontWeight:600 }}>リセット</button>;
@@ -434,7 +317,6 @@ export default function Dashboard() {
             <MultiSel label="検品回数" values={gRounds} onChange={setGRounds} options={rounds} />
             <MultiSel label="年月"     values={gYMs}    onChange={setGYMs}    options={yms} />
             <Rst onClick={()=>{setGFacs([]);setGTypes([]);setGInsps([]);setGItems([]);setGRounds([]);setGYMs([]);}} />
-            <CsvBtn data={filtered} filename={`概要_${new Date().toISOString().slice(0,10)}.csv`} />
           </FilterBar>
           {loading&&data.length===0?<Spinner/>:<>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:16 }}>
@@ -518,7 +400,6 @@ export default function Dashboard() {
               <input type="date" value={mDateTo} onChange={e=>setMDateTo(e.target.value)} style={{ background:"var(--surface2)", border:"1.5px solid var(--border2)", color:"var(--text)", borderRadius:8, padding:"6px 10px", fontSize:12, outline:"none" }} />
             </div>
             <Rst onClick={()=>{setMFacs([]);setMTypes([]);setMInsps([]);setMItems([]);setMRounds([]);setMDateFrom("");setMDateTo("");}} />
-            <CsvBtn data={mBase} filename={`年月別_${new Date().toISOString().slice(0,10)}.csv`} />
           </FilterBar>
           <div style={{ display:"flex", gap:6, marginBottom:14 }}>
             {[{k:"month",l:"月次"},{k:"date",l:"納品日別"},{k:"item",l:"品番別"}].map(t=>(
@@ -722,12 +603,9 @@ export default function Dashboard() {
             const itemSummaryList=Object.values(itemSummary).sort((a,b)=>b.avgRate-a.avgRate);
 
             return (<>
-              <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", justifyContent:"space-between" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+              <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
                 <h1 style={{ fontSize:16, fontWeight:700, color:"var(--accent)" }}>{dFacs.length>0?dFacs.join("・"):"全工場"}</h1>
                 {[...dTypes,...dInsps,...dItems,...dRounds].map((v,i)=><span key={i} style={{ background:"var(--accent-dim)", color:"var(--accent)", borderRadius:4, padding:"2px 7px", fontSize:10, fontWeight:600 }}>{v}</span>)}
-                </div>
-                <FactoryXlsxBtn drillData={drillData} mths={mths} its={its} itemSummaryList={itemSummaryList} dFacs={dFacs} />
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
                 <Kpi label="検品数"   value={fmt(insp)}      color="var(--blue)"   small />
@@ -1067,7 +945,6 @@ export default function Dashboard() {
             </div>
             <MultiSel label="工場で絞込" values={sFacs} onChange={setSFacs} options={factories} />
             <Rst onClick={()=>{setSqText("");setSFacs([]);}} />
-            <CsvBtn data={searchRes} filename={`検索結果_${new Date().toISOString().slice(0,10)}.csv`} />
           </FilterBar>
           <div style={{ marginBottom:10, fontSize:11, color:"var(--text3)" }}>
             {searchRes.length.toLocaleString("ja-JP")} 件ヒット
