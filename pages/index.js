@@ -106,6 +106,39 @@ function Tag({ children }) {
   return <span style={{ background:"var(--surface3)", color:"var(--text2)", borderRadius:4, padding:"2px 7px", fontSize:10, fontWeight:600 }}>{children}</span>;
 }
 
+function downloadCSV(rows, filename) {
+  if (!rows || rows.length === 0) return;
+  const headers = ["日付","工場名","取引種別","検品種別","品番","検品回数","検品数","不備数","不備率(%)","主な不備内容"];
+  const escape = v => {
+    const s = String(v ?? "");
+    return s.includes(",") || s.includes("\n") || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
+  };
+  const lines = [
+    headers.join(","),
+    ...rows.map(d => [
+      d.date, d.factory, d.type, d.inspectionType, d.itemNo, d.round,
+      d.count, d.total,
+      d.count > 0 ? ((d.total / d.count) * 100).toFixed(2) : "0",
+      (d.defectItems || []).slice(0, 5).map(x => `${x.item}×${x.qty}`).join(" | ")
+    ].map(escape).join(","))
+  ];
+  const bom = "\uFEFF";
+  const blob = new Blob([bom + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function CsvBtn({ data, filename }) {
+  return (
+    <button onClick={() => downloadCSV(data, filename)}
+      style={{ background:"var(--green)", border:"none", color:"#fff", borderRadius:8, padding:"5px 14px", fontSize:11, cursor:"pointer", fontWeight:700, display:"flex", alignItems:"center", gap:5 }}>
+      ⬇ CSV
+    </button>
+  );
+}
+
 function Rst({ onClick }) {
   return <button onClick={onClick} style={{ background:"transparent", border:"1.5px solid var(--border2)", color:"var(--text3)", borderRadius:8, padding:"5px 14px", fontSize:11, alignSelf:"flex-end", cursor:"pointer", fontWeight:600 }}>リセット</button>;
 }
@@ -316,6 +349,7 @@ export default function Dashboard() {
             <MultiSel label="検品回数" values={gRounds} onChange={setGRounds} options={rounds} />
             <MultiSel label="年月"     values={gYMs}    onChange={setGYMs}    options={yms} />
             <Rst onClick={()=>{setGFacs([]);setGTypes([]);setGInsps([]);setGItems([]);setGRounds([]);setGYMs([]);}} />
+            <CsvBtn data={filtered} filename={`概要_${new Date().toISOString().slice(0,10)}.csv`} />
           </FilterBar>
           {loading&&data.length===0?<Spinner/>:<>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom:16 }}>
@@ -399,6 +433,7 @@ export default function Dashboard() {
               <input type="date" value={mDateTo} onChange={e=>setMDateTo(e.target.value)} style={{ background:"var(--surface2)", border:"1.5px solid var(--border2)", color:"var(--text)", borderRadius:8, padding:"6px 10px", fontSize:12, outline:"none" }} />
             </div>
             <Rst onClick={()=>{setMFacs([]);setMTypes([]);setMInsps([]);setMItems([]);setMRounds([]);setMDateFrom("");setMDateTo("");}} />
+            <CsvBtn data={mBase} filename={`年月別_${new Date().toISOString().slice(0,10)}.csv`} />
           </FilterBar>
           <div style={{ display:"flex", gap:6, marginBottom:14 }}>
             {[{k:"month",l:"月次"},{k:"date",l:"納品日別"},{k:"item",l:"品番別"}].map(t=>(
@@ -542,6 +577,7 @@ export default function Dashboard() {
             <MultiSel label="品番"      values={dItems}  onChange={setDItems}  options={[...new Set((dFacs.length>0?data.filter(d=>dFacs.includes(d.factory)):data).map(d=>d.itemNo))].filter(Boolean).sort()} />
             <MultiSel label="検品回数"  values={dRounds} onChange={setDRounds} options={rounds} />
             <Rst onClick={()=>{setDFacs([]);setDTypes([]);setDInsps([]);setDItems([]);setDRounds([]);setSelectedTrendItems([]);}} />
+            <CsvBtn data={drillData} filename={`工場詳細_${(dFacs[0]||"全工場").slice(0,10)}_${new Date().toISOString().slice(0,10)}.csv`} />
           </FilterBar>
           {(()=>{
             const insp=drillData.reduce((s,d)=>s+d.count,0), def=drillData.reduce((s,d)=>s+d.total,0), r=rate(def,insp);
@@ -944,6 +980,7 @@ export default function Dashboard() {
             </div>
             <MultiSel label="工場で絞込" values={sFacs} onChange={setSFacs} options={factories} />
             <Rst onClick={()=>{setSqText("");setSFacs([]);}} />
+            <CsvBtn data={searchRes} filename={`検索結果_${new Date().toISOString().slice(0,10)}.csv`} />
           </FilterBar>
           <div style={{ marginBottom:10, fontSize:11, color:"var(--text3)" }}>
             {searchRes.length.toLocaleString("ja-JP")} 件ヒット
