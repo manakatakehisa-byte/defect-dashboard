@@ -116,7 +116,7 @@ function downloadCSV(rows, filename) {
   const lines = [
     headers.join(","),
     ...rows.map(d => [
-      d.date, d.factory, d.type, d.inspectionType, d.itemNo, d.round,
+      (d.date ? new Date(d.date).toLocaleDateString('ja-JP', {year:'numeric',month:'2-digit',day:'2-digit'}) : d.date), d.factory, d.type, d.inspectionType, d.itemNo, d.round,
       d.count, d.total,
       d.count > 0 ? ((d.total / d.count) * 100).toFixed(2) : "0",
       (d.defectItems || []).slice(0, 5).map(x => `${x.item}×${x.qty}`).join(" | ")
