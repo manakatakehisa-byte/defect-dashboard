@@ -106,22 +106,24 @@ function Tag({ children }) {
   return <span style={{ background:"var(--surface3)", color:"var(--text2)", borderRadius:4, padding:"2px 7px", fontSize:10, fontWeight:600 }}>{children}</span>;
 }
 
-function downloadCSV(rows, filename) {
-  if (!rows || rows.length === 0) return;
-  const headers = ["日付","工場名","取引種別","検品種別","品番","検品回数","検品数","不備数","不備率(%)","主な不備内容"];
+function downloadCSV(sections, filename) {
   const escape = v => {
     const s = String(v ?? "");
     return s.includes(",") || s.includes("\n") || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
   };
-  const lines = [
-    headers.join(","),
-    ...rows.map(d => [
-      (d.date ? new Date(d.date).toLocaleDateString('ja-JP', {year:'numeric',month:'2-digit',day:'2-digit'}) : d.date), d.factory, d.type, d.inspectionType, d.itemNo, d.round,
-      d.count, d.total,
-      d.count > 0 ? ((d.total / d.count) * 100).toFixed(2) : "0",
-      (d.defectItems || []).slice(0, 5).map(x => `${x.item}×${x.qty}`).join(" | ")
-    ].map(escape).join(","))
-  ];
+  const fmtDate = d => {
+    if (!d) return "";
+    const dt = new Date(d);
+    if (isNaN(dt)) return String(d);
+    return `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}`;
+  };
+  let lines = [];
+  sections.forEach(({ title, headers, rows }) => {
+    lines.push(escape(title));
+    lines.push(headers.map(escape).join(","));
+    rows.forEach(r => lines.push(r.map(escape).join(",")));
+    lines.push("");
+  });
   const bom = "\uFEFF";
   const blob = new Blob([bom + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -131,10 +133,76 @@ function downloadCSV(rows, filename) {
 }
 
 function CsvBtn({ data, filename }) {
+  const fmtDate = d => {
+    if (!d) return "";
+    const dt = new Date(d);
+    if (isNaN(dt)) return String(d);
+    return `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}`;
+  };
   return (
-    <button onClick={() => downloadCSV(data, filename)}
+    <button onClick={() => downloadCSV([{
+      title: "■ 明細データ",
+      headers: ["日付","工場名","取引種別","検品種別","品番","検品回数","検品数","不備数","不備率(%)","主な不備内容"],
+      rows: (data||[]).map(d => [
+        fmtDate(d.date), d.factory, d.type, d.inspectionType, d.itemNo, d.round,
+        d.count, d.total,
+        d.count > 0 ? ((d.total/d.count)*100).toFixed(2) : "0",
+        (d.defectItems||[]).slice(0,5).map(x=>`${x.item}×${x.qty}`).join(" | ")
+      ])
+    }], filename)}
       style={{ background:"var(--green)", border:"none", color:"#fff", borderRadius:8, padding:"5px 14px", fontSize:11, cursor:"pointer", fontWeight:700, display:"flex", alignItems:"center", gap:5 }}>
       ⬇ CSV
+    </button>
+  );
+}
+
+function FactoryCsvBtn({ drillData, mths, its, itemSummaryList, dFacs }) {
+  const fmtDate = d => {
+    if (!d) return "";
+    const dt = new Date(d);
+    if (isNaN(dt)) return String(d);
+    return `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}`;
+  };
+  const handleClick = () => {
+    const pieT = its.reduce((s,d)=>s+d.value,0);
+    const sections = [
+      {
+        title: `■ 品番別サマリー（${dFacs.length>0?dFacs.join("・"):"全工場"}）`,
+        headers: ["品番","検品数","不備数","累計不備率(%)","月次平均不備率(%)","最小(%)","最大(%)","月数","主な不備TOP3"],
+        rows: itemSummaryList.map(d => {
+          const rv = d.insp>0?((d.def/d.insp)*100).toFixed(2):0;
+          const topDefs = Object.entries(d.defMap).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`${k}(${v})`).join(" | ");
+          return [d.itemNo, d.insp, d.def, rv, d.avgRate, d.minRate, d.maxRate, d.monthCount, topDefs];
+        })
+      },
+      {
+        title: "■ 不備内容内訳",
+        headers: ["不備項目","件数","割合(%)"],
+        rows: its.map(d => [d.name, d.value, pieT>0?((d.value/pieT)*100).toFixed(1):0])
+      },
+      {
+        title: "■ 月次推移",
+        headers: ["年月","検品数","不備数","不備率(%)"],
+        rows: mths.map(m => [m.month, m.insp, m.def, m.rate])
+      },
+      {
+        title: "■ 明細データ（不備あり）",
+        headers: ["日付","工場名","取引種別","検品種別","品番","検品回数","検品数","不備数","不備率(%)","主な不備内容"],
+        rows: [...drillData].filter(d=>d.hasDefect).sort((a,b)=>b.date.localeCompare(a.date)).map(d => [
+          fmtDate(d.date), d.factory, d.type, d.inspectionType, d.itemNo, d.round,
+          d.count, d.total,
+          d.count>0?((d.total/d.count)*100).toFixed(2):0,
+          (d.defectItems||[]).slice(0,5).map(x=>`${x.item}×${x.qty}`).join(" | ")
+        ])
+      }
+    ];
+    const fname = `工場詳細_${(dFacs[0]||"全工場").slice(0,10)}_${new Date().toISOString().slice(0,10)}.csv`;
+    downloadCSV(sections, fname);
+  };
+  return (
+    <button onClick={handleClick}
+      style={{ background:"var(--green)", border:"none", color:"#fff", borderRadius:8, padding:"5px 14px", fontSize:11, cursor:"pointer", fontWeight:700, display:"flex", alignItems:"center", gap:5 }}>
+      ⬇ CSV（全データ）
     </button>
   );
 }
@@ -577,7 +645,6 @@ export default function Dashboard() {
             <MultiSel label="品番"      values={dItems}  onChange={setDItems}  options={[...new Set((dFacs.length>0?data.filter(d=>dFacs.includes(d.factory)):data).map(d=>d.itemNo))].filter(Boolean).sort()} />
             <MultiSel label="検品回数"  values={dRounds} onChange={setDRounds} options={rounds} />
             <Rst onClick={()=>{setDFacs([]);setDTypes([]);setDInsps([]);setDItems([]);setDRounds([]);setSelectedTrendItems([]);}} />
-            <CsvBtn data={drillData} filename={`工場詳細_${(dFacs[0]||"全工場").slice(0,10)}_${new Date().toISOString().slice(0,10)}.csv`} />
           </FilterBar>
           {(()=>{
             const insp=drillData.reduce((s,d)=>s+d.count,0), def=drillData.reduce((s,d)=>s+d.total,0), r=rate(def,insp);
@@ -638,9 +705,12 @@ export default function Dashboard() {
             const itemSummaryList=Object.values(itemSummary).sort((a,b)=>b.avgRate-a.avgRate);
 
             return (<>
-              <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+              <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", justifyContent:"space-between" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
                 <h1 style={{ fontSize:16, fontWeight:700, color:"var(--accent)" }}>{dFacs.length>0?dFacs.join("・"):"全工場"}</h1>
                 {[...dTypes,...dInsps,...dItems,...dRounds].map((v,i)=><span key={i} style={{ background:"var(--accent-dim)", color:"var(--accent)", borderRadius:4, padding:"2px 7px", fontSize:10, fontWeight:600 }}>{v}</span>)}
+                </div>
+                <FactoryCsvBtn drillData={drillData} mths={mths} its={its} itemSummaryList={itemSummaryList} dFacs={dFacs} />
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
                 <Kpi label="検品数"   value={fmt(insp)}      color="var(--blue)"   small />
