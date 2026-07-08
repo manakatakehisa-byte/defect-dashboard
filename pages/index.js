@@ -328,14 +328,14 @@ export default function Dashboard() {
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"3fr 2fr", gap:16, marginBottom:16 }}>
               <Panel>
-                <ST>工場別 不備率（上位15）</ST>
-                <ResponsiveContainer width="100%" height={340}>
-                  <BarChart data={facAgg.slice(0,15)} layout="vertical" margin={{left:0,right:50,top:2,bottom:2}}>
+                <ST>工場別 不備率（全工場）</ST>
+                <ResponsiveContainer width="100%" height={Math.max(340, facAgg.length * 22)}>
+                  <BarChart data={facAgg} layout="vertical" margin={{left:0,right:50,top:2,bottom:2}}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
                     <XAxis type="number" tick={{fill:"var(--text3)",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v+"%"} />
                     <YAxis dataKey="factory" type="category" width={160} tick={{fill:"var(--text2)",fontSize:9}} axisLine={false} tickLine={false} />
                     <Tooltip content={<TT/>} />
-                    <Bar dataKey="rate" name="不備率(%)" radius={[0,4,4,0]}>{facAgg.slice(0,15).map((d,i)=><Cell key={i} fill={rateColor(d.rate)}/>)}</Bar>
+                    <Bar dataKey="rate" name="不備率(%)" radius={[0,4,4,0]}>{facAgg.map((d,i)=><Cell key={i} fill={rateColor(d.rate)}/>)}</Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </Panel>
