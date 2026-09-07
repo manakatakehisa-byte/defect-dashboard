@@ -197,6 +197,7 @@ export default function Dashboard() {
   const [mItems,setMItems]=useState([]); const [mRounds,setMRounds]=useState([]);
   const [mDateFrom,setMDateFrom]=useState(""); const [mDateTo,setMDateTo]=useState("");
   const [mViewMode,setMViewMode]=useState("month");
+  const [mSelectedItems,setMSelectedItems]=useState([]); // ★ 月次の中で品番を絞って推移を見る
   const mBase = useMemo(() => {
     let d = applyMulti(data,"factory",mFacs); d = applyMulti(d,"type",mTypes); d = applyMulti(d,"inspectionType",mInsps);
     d = applyMulti(d,"itemNo",mItems); d = applyMulti(d,"round",mRounds);
@@ -206,12 +207,46 @@ export default function Dashboard() {
   }, [data,mFacs,mTypes,mInsps,mItems,mRounds,mDateFrom,mDateTo]);
   const mMonthly=useMemo(()=>byMonth(mBase),[mBase]);
   const mDaily=useMemo(()=>byDate(mBase),[mBase]);
-  const mItemAgg=useMemo(()=>byItem(mBase),[mBase]);
   const mYearly=useMemo(()=>{
     const m={};
     mBase.forEach(d=>{ const y=(d.ym||"").slice(0,4); if(!y) return; if(!m[y]) m[y]={year:y,insp:0,def:0}; m[y].insp+=d.count; m[y].def+=d.total; });
     return Object.values(m).sort((a,b)=>a.year.localeCompare(b.year)).map(r=>({...r,rate:rate(r.def,r.insp)}));
   },[mBase]);
+
+  // ★ 品番別（年月別タブ内）: 品番ごとの検品数・不備数・不備率サマリー（不良項目別ではなく品番別）
+  const mAllItemNos = useMemo(() => [...new Set(mBase.map(d=>d.itemNo))].filter(Boolean).sort(), [mBase]);
+  const mItemMonthMap = useMemo(() => {
+    const map = {};
+    mBase.forEach(d=>{
+      if(!d.ym || !d.itemNo) return;
+      const key = `${d.itemNo}__${d.ym}`;
+      if(!map[key]) map[key] = { itemNo:d.itemNo, month:d.ym, insp:0, def:0 };
+      map[key].insp += d.count; map[key].def += d.total;
+    });
+    return map;
+  }, [mBase]);
+  const mItemSummary = useMemo(() => {
+    const map = {};
+    mBase.forEach(d=>{
+      if(!d.itemNo) return;
+      if(!map[d.itemNo]) map[d.itemNo] = { itemNo:d.itemNo, insp:0, def:0, n:0, defMap:{} };
+      map[d.itemNo].insp += d.count; map[d.itemNo].def += d.total; map[d.itemNo].n += 1;
+      (d.defectItems||[]).forEach(x=>{ map[d.itemNo].defMap[x.item]=(map[d.itemNo].defMap[x.item]||0)+x.qty; });
+    });
+    return Object.values(map).map(r=>({ ...r, rate: rate(r.def,r.insp) })).sort((a,b)=>b.rate-a.rate);
+  }, [mBase]);
+  const mItemTrendData = useMemo(() => {
+    const months = [...new Set(mBase.map(d=>d.ym))].filter(Boolean).sort();
+    return months.map(month=>{
+      const entry = { month };
+      mSelectedItems.forEach(itemNo=>{
+        const key = `${itemNo}__${month}`;
+        const r = mItemMonthMap[key];
+        entry[itemNo] = r && r.insp>0 ? rate(r.def, r.insp) : null;
+      });
+      return entry;
+    });
+  }, [mBase, mSelectedItems, mItemMonthMap]);
 
   // 工場詳細
   const [dFacs,setDFacs]=useState([]);
@@ -222,6 +257,7 @@ export default function Dashboard() {
   const [selectedTrendItems,setSelectedTrendItems]=useState([]); // ★ 品番別推移
   const prevDFacs=useRef([]); const [dTypes,setDTypes]=useState([]); const [dInsps,setDInsps]=useState([]);
   const [dItems,setDItems]=useState([]); const [dRounds,setDRounds]=useState([]);
+  const [dDateFrom,setDDateFrom]=useState(""); const [dDateTo,setDDateTo]=useState(""); // ★ 工場詳細: 期間絞り込み
 
   useEffect(()=>{
     if(dFacs.length===0){ setAiAnalysis(""); return; }
@@ -255,8 +291,11 @@ export default function Dashboard() {
 
   const drillData=useMemo(()=>{
     let d=(dFacs.length===0?data:data.filter(d=>dFacs.includes(d.factory))); d=applyMulti(d,"type",dTypes); d=applyMulti(d,"inspectionType",dInsps);
-    d=applyMulti(d,"itemNo",dItems); d=applyMulti(d,"round",dRounds); return d;
-  },[data,dFacs,dTypes,dInsps,dItems,dRounds]);
+    d=applyMulti(d,"itemNo",dItems); d=applyMulti(d,"round",dRounds);
+    if(dDateFrom) d=d.filter(r=>r.date>=dDateFrom);
+    if(dDateTo) d=d.filter(r=>r.date<=dDateTo);
+    return d;
+  },[data,dFacs,dTypes,dInsps,dItems,dRounds,dDateFrom,dDateTo]);
 
   // 比較
   const [cmpFacs,setCmpFacs]=useState([]);
@@ -399,7 +438,7 @@ export default function Dashboard() {
               <label style={{ color:"var(--text3)", fontSize:9, letterSpacing:"0.07em", textTransform:"uppercase", fontWeight:600 }}>期間（終了）</label>
               <input type="date" value={mDateTo} onChange={e=>setMDateTo(e.target.value)} style={{ background:"var(--surface2)", border:"1.5px solid var(--border2)", color:"var(--text)", borderRadius:8, padding:"6px 10px", fontSize:12, outline:"none" }} />
             </div>
-            <Rst onClick={()=>{setMFacs([]);setMTypes([]);setMInsps([]);setMItems([]);setMRounds([]);setMDateFrom("");setMDateTo("");}} />
+            <Rst onClick={()=>{setMFacs([]);setMTypes([]);setMInsps([]);setMItems([]);setMRounds([]);setMDateFrom("");setMDateTo("");setMSelectedItems([]);}} />
           </FilterBar>
           <div style={{ display:"flex", gap:6, marginBottom:14 }}>
             {[{k:"month",l:"月次"},{k:"date",l:"納品日別"},{k:"item",l:"品番別"}].map(t=>(
@@ -514,24 +553,114 @@ export default function Dashboard() {
                 </div>
               </Panel>
             </>)}
-            {mViewMode==="item" && (
+            {mViewMode==="item" && (<>
+              <Panel style={{ marginBottom:16 }}>
+                <ST>品番別 不備率推移（品番を選んでグラフに追加）</ST>
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontSize:10, color:"var(--text3)", marginBottom:6 }}>品番を選択してグラフに追加（複数可）</div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                    {mAllItemNos.map((itemNo)=>{
+                      const sel=mSelectedItems.includes(itemNo);
+                      const colorIdx=mSelectedItems.indexOf(itemNo);
+                      return (
+                        <button key={itemNo} onClick={()=>{
+                          if(sel){ setMSelectedItems(mSelectedItems.filter(x=>x!==itemNo)); }
+                          else { setMSelectedItems([...mSelectedItems,itemNo]); }
+                        }} style={{
+                          padding:"4px 10px", borderRadius:6, fontSize:11, cursor:"pointer", fontWeight:sel?700:400,
+                          border:`1.5px solid ${sel?COLORS[colorIdx%COLORS.length]:"var(--border2)"}`,
+                          background:sel?COLORS[colorIdx%COLORS.length]+"22":"var(--surface2)",
+                          color:sel?COLORS[colorIdx%COLORS.length]:"var(--text2)",
+                        }}>
+                          {sel&&<span style={{marginRight:4}}>✓</span>}{itemNo}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {mSelectedItems.length>0&&(
+                    <button onClick={()=>setMSelectedItems([])} style={{ marginTop:8, background:"transparent", border:"1px solid var(--border2)", color:"var(--text3)", borderRadius:6, padding:"3px 10px", fontSize:10, cursor:"pointer" }}>
+                      クリア
+                    </button>
+                  )}
+                </div>
+                {mSelectedItems.length===0?(
+                  <div style={{ textAlign:"center", color:"var(--text3)", padding:40, fontSize:12, background:"var(--surface2)", borderRadius:8 }}>
+                    ↑ 上のボタンから品番を選択すると月次の推移グラフが表示されます
+                  </div>
+                ):(
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={mItemTrendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="month" tick={{fill:"var(--text3)",fontSize:10}} axisLine={false} tickLine={false} />
+                      <YAxis tick={{fill:"var(--text3)",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v+"%"} />
+                      <Tooltip content={({active,payload,label})=>{
+                        if(!active||!payload?.length) return null;
+                        return (
+                          <div style={{background:"var(--surface)",border:"1.5px solid var(--border2)",borderRadius:8,padding:"10px 14px",fontSize:11,boxShadow:"0 4px 12px rgba(46,95,163,0.1)"}}>
+                            <div style={{color:"var(--text2)",marginBottom:6,fontWeight:600}}>{label}</div>
+                            {payload.filter(p=>p.value!==null).map((p,i)=>(
+                              <div key={i} style={{color:p.color,marginBottom:2}}>
+                                {p.name}: <b style={{fontFamily:"var(--mono)"}}>{p.value}%</b>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }}/>
+                      <Legend wrapperStyle={{fontSize:11,color:"var(--text2)"}}/>
+                      {mSelectedItems.map((itemNo,i)=>(
+                        <Line key={itemNo} type="monotone" dataKey={itemNo} stroke={COLORS[i%COLORS.length]} strokeWidth={2.5}
+                          dot={{r:4,fill:COLORS[i%COLORS.length],strokeWidth:0}} connectNulls name={itemNo}/>
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </Panel>
               <Panel>
-                <ST>品番別 不備傾向</ST>
-                <div style={{ display:"flex", flexDirection:"column", gap:6, maxHeight:500, overflowY:"auto" }}>
-                  {mItemAgg.slice(0,30).map((d,i)=>(
-                    <div key={i} style={{ display:"flex", alignItems:"center", gap:8 }}>
-                      <div style={{ width:20, textAlign:"right", color:"var(--text3)", fontFamily:"var(--mono)", fontSize:9 }}>{i+1}</div>
-                      <div style={{ width:140, fontSize:11, color:"var(--text)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{d.name}</div>
-                      <div style={{ flex:1, background:"var(--surface2)", borderRadius:3, height:6, overflow:"hidden" }}>
-                        <div style={{ height:"100%", width:`${mItemAgg.length>0?d.pct/Math.max(...mItemAgg.slice(0,30).map(x=>x.pct))*100:0}%`, background:COLORS[i%COLORS.length], borderRadius:3 }} />
-                      </div>
-                      <div style={{ width:38, textAlign:"right", fontFamily:"var(--mono)", fontSize:10, color:COLORS[i%COLORS.length], fontWeight:600 }}>{d.pct}%</div>
-                      <div style={{ width:44, textAlign:"right", fontFamily:"var(--mono)", fontSize:9, color:"var(--text3)" }}>{fmt(d.value)}</div>
-                    </div>
-                  ))}
+                <ST>品番別 不備率サマリー（不備率順）</ST>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                    <thead><tr style={{ borderBottom:"2px solid var(--border)" }}>
+                      {["#","品番","検品数","不備数","不備率","件数","主な不備TOP3","推移に追加"].map(h=>(
+                        <th key={h} style={{ padding:"6px 10px", textAlign:(h==="品番"||h==="主な不備TOP3")?"left":"right", color:"var(--accent)", fontWeight:700, fontSize:10, whiteSpace:"nowrap" }}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {mItemSummary.map((d,i)=>{
+                        const topDefs=Object.entries(d.defMap).sort((a,b)=>b[1]-a[1]).slice(0,3);
+                        const sel=mSelectedItems.includes(d.itemNo);
+                        const colorIdx=mSelectedItems.indexOf(d.itemNo);
+                        return (
+                          <tr key={d.itemNo} style={{ borderBottom:"1px solid var(--border)" }}
+                            onMouseEnter={e=>e.currentTarget.style.background="var(--surface2)"}
+                            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                            <td style={{ padding:"6px 10px", textAlign:"right", color:"var(--text3)", fontFamily:"var(--mono)", fontSize:9 }}>{i+1}</td>
+                            <td style={{ padding:"6px 10px", color:"var(--blue)", fontFamily:"var(--mono)", fontWeight:600 }}>{d.itemNo}</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", color:"var(--text2)" }}>{fmt(d.insp)}</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", color:"var(--red)" }}>{fmt(d.def)}</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", fontWeight:700, color:rateColor(d.rate) }}>{d.rate}%</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"var(--mono)", color:"var(--text3)" }}>{d.n}</td>
+                            <td style={{ padding:"6px 10px", color:"var(--text3)", fontSize:10 }}>{topDefs.map(([k,v])=>`${k}(${v})`).join("、")}</td>
+                            <td style={{ padding:"6px 10px", textAlign:"center" }}>
+                              <button onClick={()=>{
+                                if(sel){ setMSelectedItems(mSelectedItems.filter(x=>x!==d.itemNo)); }
+                                else { setMSelectedItems([...mSelectedItems,d.itemNo]); }
+                              }} style={{
+                                padding:"3px 10px", borderRadius:5, fontSize:10, cursor:"pointer", fontWeight:sel?700:400,
+                                border:`1.5px solid ${sel?COLORS[colorIdx%COLORS.length]:"var(--border2)"}`,
+                                background:sel?COLORS[colorIdx%COLORS.length]:"transparent",
+                                color:sel?"#fff":"var(--text2)",
+                              }}>
+                                {sel?"✓ 表示中":"＋ 追加"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </Panel>
-            )}
+            </>)}
           </>}
         </>)}
 
@@ -542,7 +671,15 @@ export default function Dashboard() {
             <MultiSel label="検品種別"  values={dInsps}  onChange={setDInsps}  options={inspTypes} />
             <MultiSel label="品番"      values={dItems}  onChange={setDItems}  options={[...new Set((dFacs.length>0?data.filter(d=>dFacs.includes(d.factory)):data).map(d=>d.itemNo))].filter(Boolean).sort()} />
             <MultiSel label="検品回数"  values={dRounds} onChange={setDRounds} options={rounds} />
-            <Rst onClick={()=>{setDFacs([]);setDTypes([]);setDInsps([]);setDItems([]);setDRounds([]);setSelectedTrendItems([]);}} />
+            <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+              <label style={{ color:"var(--text3)", fontSize:9, letterSpacing:"0.07em", textTransform:"uppercase", fontWeight:600 }}>期間（開始）</label>
+              <input type="date" value={dDateFrom} onChange={e=>setDDateFrom(e.target.value)} style={{ background:"var(--surface2)", border:"1.5px solid var(--border2)", color:"var(--text)", borderRadius:8, padding:"6px 10px", fontSize:12, outline:"none" }} />
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+              <label style={{ color:"var(--text3)", fontSize:9, letterSpacing:"0.07em", textTransform:"uppercase", fontWeight:600 }}>期間（終了）</label>
+              <input type="date" value={dDateTo} onChange={e=>setDDateTo(e.target.value)} style={{ background:"var(--surface2)", border:"1.5px solid var(--border2)", color:"var(--text)", borderRadius:8, padding:"6px 10px", fontSize:12, outline:"none" }} />
+            </div>
+            <Rst onClick={()=>{setDFacs([]);setDTypes([]);setDInsps([]);setDItems([]);setDRounds([]);setDDateFrom("");setDDateTo("");setSelectedTrendItems([]);}} />
           </FilterBar>
           {(()=>{
             const insp=drillData.reduce((s,d)=>s+d.count,0), def=drillData.reduce((s,d)=>s+d.total,0), r=rate(def,insp);
@@ -606,6 +743,7 @@ export default function Dashboard() {
               <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
                 <h1 style={{ fontSize:16, fontWeight:700, color:"var(--accent)" }}>{dFacs.length>0?dFacs.join("・"):"全工場"}</h1>
                 {[...dTypes,...dInsps,...dItems,...dRounds].map((v,i)=><span key={i} style={{ background:"var(--accent-dim)", color:"var(--accent)", borderRadius:4, padding:"2px 7px", fontSize:10, fontWeight:600 }}>{v}</span>)}
+                {(dDateFrom||dDateTo)&&<span style={{ background:"var(--accent-dim)", color:"var(--accent)", borderRadius:4, padding:"2px 7px", fontSize:10, fontWeight:600 }}>{dDateFrom||"…"} 〜 {dDateTo||"…"}</span>}
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
                 <Kpi label="検品数"   value={fmt(insp)}      color="var(--blue)"   small />
