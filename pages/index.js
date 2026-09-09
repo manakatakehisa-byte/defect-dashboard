@@ -128,6 +128,24 @@ function applyMulti(data, field, values) {
   return data.filter(d => values.includes(d[field]));
 }
 
+// 日付データの実際の文字列フォーマット（"2024/4/1" 等）に関わらず、
+// <input type="date"> の "YYYY-MM-DD" と正しく比較できるようDateオブジェクトで判定する
+function inDateRange(dateStr, from, to) {
+  if (!dateStr) return false;
+  if (!from && !to) return true;
+  const dt = new Date(dateStr);
+  if (isNaN(dt)) return true; // 解析できない値は除外しない
+  if (from) {
+    const f = new Date(from);
+    if (!isNaN(f) && dt < f) return false;
+  }
+  if (to) {
+    const t = new Date(to);
+    if (!isNaN(t)) { t.setHours(23,59,59,999); if (dt > t) return false; }
+  }
+  return true;
+}
+
 const TABS = [
   { key:"overview", label:"概要" },
   { key:"monthly",  label:"年月別" },
@@ -201,8 +219,7 @@ export default function Dashboard() {
   const mBase = useMemo(() => {
     let d = applyMulti(data,"factory",mFacs); d = applyMulti(d,"type",mTypes); d = applyMulti(d,"inspectionType",mInsps);
     d = applyMulti(d,"itemNo",mItems); d = applyMulti(d,"round",mRounds);
-    if (mDateFrom) d = d.filter(r=>r.date>=mDateFrom);
-    if (mDateTo) d = d.filter(r=>r.date<=mDateTo);
+    d = d.filter(r=>inDateRange(r.date, mDateFrom, mDateTo));
     return d;
   }, [data,mFacs,mTypes,mInsps,mItems,mRounds,mDateFrom,mDateTo]);
   const mMonthly=useMemo(()=>byMonth(mBase),[mBase]);
@@ -292,8 +309,7 @@ export default function Dashboard() {
   const drillData=useMemo(()=>{
     let d=(dFacs.length===0?data:data.filter(d=>dFacs.includes(d.factory))); d=applyMulti(d,"type",dTypes); d=applyMulti(d,"inspectionType",dInsps);
     d=applyMulti(d,"itemNo",dItems); d=applyMulti(d,"round",dRounds);
-    if(dDateFrom) d=d.filter(r=>r.date>=dDateFrom);
-    if(dDateTo) d=d.filter(r=>r.date<=dDateTo);
+    d=d.filter(r=>inDateRange(r.date, dDateFrom, dDateTo));
     return d;
   },[data,dFacs,dTypes,dInsps,dItems,dRounds,dDateFrom,dDateTo]);
 
@@ -305,8 +321,7 @@ export default function Dashboard() {
   const cmpData=useMemo(()=>cmpFacs.map(fac=>{
     let rows=data.filter(d=>d.factory===fac);
     if(cmpYMs.length>0) rows=rows.filter(d=>cmpYMs.includes(d.ym));
-    if(cmpDateFrom) rows=rows.filter(d=>d.date>=cmpDateFrom);
-    if(cmpDateTo) rows=rows.filter(d=>d.date<=cmpDateTo);
+    rows=rows.filter(d=>inDateRange(d.date, cmpDateFrom, cmpDateTo));
     const insp=rows.reduce((s,d)=>s+d.count,0), def=rows.reduce((s,d)=>s+d.total,0);
     return {factory:fac,insp,def,rate:rate(def,insp),items:(byItem(rows)||[]).slice(0,6),months:byMonth(rows)||[]};
   }),[data,cmpFacs,cmpYMs,cmpDateFrom,cmpDateTo]);
